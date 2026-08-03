@@ -1,0 +1,25 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*token*.json
+*credential*
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# --- eval run output (regenerable; baselines ARE committed) ---
+results/runs/
+*.log
+
+# --- os ---
+.DS_Store
+Thumbs.db
