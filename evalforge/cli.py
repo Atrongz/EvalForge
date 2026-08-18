@@ -4,6 +4,7 @@
     evalforge run <suite>                # run one suite (or --all)
     evalforge run <suite> --dry-run      # walk everything, call nothing
     evalforge baseline <suite>           # promote the last run to the baseline
+    evalforge gate <env-suite>           # prove tasks are not reward-hackable
     evalforge report <suite> --markdown  # emit a PR-ready report
 
 Exit codes: 0 pass · 1 suite gate failed · 2 regression vs baseline · 3 usage
@@ -16,12 +17,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from .models import discover_suites, load_suite
+from .envs import build_env, registered_envs
+from .hackgate import gate_passed, gate_tasks
+from .models import discover_env_suites, discover_suites, load_env_suite, load_suite
 from .report import console, print_suite_result, print_summary, to_markdown
 from .runner import run_suite, suite_passed
 from .scorers import registered_scorers
 from .store import ResultStore, compare
 from .targets import registered_targets
+from .verifiers import registered_verifiers
 
 EXIT_OK, EXIT_FAILED, EXIT_REGRESSION, EXIT_USAGE = 0, 1, 2, 3
 
@@ -60,9 +64,77 @@ def cmd_list(args: argparse.Namespace) -> int:
             )
         except Exception as exc:
             console.print(f"  [red]{path.name} — failed to load: {exc}[/red]")
+    console.print("\n[bold]ENVIRONMENTS[/bold]")
+    env_suites = discover_env_suites(Path(args.root).resolve() / "envs")
+    if not env_suites:
+        console.print("  [dim]no environment suites found under envs/[/dim]")
+    for path in env_suites:
+        try:
+            config, tasks = load_env_suite(path)
+            active = sum(1 for t in tasks if not t.skip)
+            console.print(
+                f"  [bold]{path.name}[/bold]  [dim]{active} tasks · {config.env}[/dim]"
+                f"\n    {config.description}"
+            )
+        except Exception as exc:
+            console.print(f"  [red]{path.name} — failed to load: {exc}[/red]")
+
     console.print(f"\n[bold]TARGETS[/bold]\n  {', '.join(registered_targets())}")
-    console.print(f"\n[bold]SCORERS[/bold]\n  {', '.join(registered_scorers())}\n")
+    console.print(f"\n[bold]SCORERS[/bold]\n  {', '.join(registered_scorers())}")
+    console.print(f"\n[bold]ENVS[/bold]\n  {', '.join(registered_envs())}")
+    console.print(f"\n[bold]VERIFIERS[/bold]\n  {', '.join(registered_verifiers())}\n")
     return EXIT_OK
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """Run the reward-hack gate over an environment suite.
+
+    This runs before anything expensive and costs nothing but CPU, so it is the
+    cheapest possible place to discover that a task measures nothing.
+    """
+    root = Path(args.root).resolve() / "envs"
+    found = discover_env_suites(root)
+    if args.all:
+        selected = found
+    else:
+        selected = [p for p in found if p.name == args.suite]
+        if not selected:
+            available = ", ".join(p.name for p in found) or "(none)"
+            console.print(f"[red]no environment suite named {args.suite!r}[/red]. Available: {available}")
+            return EXIT_USAGE
+
+    all_reports = []
+    for path in selected:
+        config, tasks = load_env_suite(path)
+        console.print(f"\n[bold]{config.name}[/bold]  [dim]{config.env}[/dim]")
+        reports = gate_tasks(
+            lambda c=config: build_env(c.env, c.env_config),
+            tasks,
+            pass_threshold=config.pass_threshold,
+        )
+        all_reports.extend(reports)
+        for report in reports:
+            mark = "[green]PASS[/green]" if report.passed else "[red]FAIL[/red]"
+            console.print(f"  {mark}  {report.task_id}")
+            for probe in report.probes:
+                colour = "green" if probe.ok else "red"
+                console.print(
+                    f"        [{colour}]{probe.kind:<11}[/{colour}] {probe.name:<18} "
+                    f"reward={probe.reward:<5} [dim]{probe.verdict}[/dim]"
+                )
+
+    hacks = [p for r in all_reports for p in r.hacks]
+    if hacks:
+        console.print(
+            f"\n[bold red]{len(hacks)} reward hack(s)[/bold red] — a shortcut was rewarded. "
+            "Fix the verifier, not the task.\n"
+        )
+    ok = gate_passed(all_reports)
+    console.print(
+        f"[bold]{'gate passed' if ok else 'gate failed'}[/bold] "
+        f"· {sum(1 for r in all_reports if r.passed)}/{len(all_reports)} tasks sound\n"
+    )
+    return EXIT_OK if ok else EXIT_FAILED
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -165,6 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="walk everything, invoke nothing")
     p.add_argument("--category", help="only cases in this category")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("gate", help="run the reward-hack gate over an environment suite")
+    p.add_argument("suite", nargs="?")
+    p.add_argument("--all", action="store_true", help="gate every environment suite")
+    p.set_defaults(func=cmd_gate)
 
     p = sub.add_parser("baseline", help="promote the latest run to the baseline")
     p.add_argument("suite", nargs="?")
