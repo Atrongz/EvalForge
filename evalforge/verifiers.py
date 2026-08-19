@@ -20,6 +20,7 @@ One rule that is specific to rewards:
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,6 +70,22 @@ def command_exit_zero(state: Any, config: dict[str, Any]) -> Reward:
     if not cmd:
         return Reward(0.0, "verifier command_exit_zero needs a 'cmd'")
 
+    # Environments that provision an interpreter expose it in terminal state.
+    # Substituted by explicit key rather than str.format so a command containing
+    # braces (a shell brace expansion, a JSON literal) is not a crash.
+    if isinstance(cmd, str):
+        for key in ("python", "root"):
+            value = (state or {}).get(key)
+            if value:
+                cmd = cmd.replace("{" + key + "}", str(value))
+
+    # An environment that provisions an interpreter or an import path declares
+    # it in terminal state. Without this the verifier would run in the harness's
+    # own environment and grade a repo it cannot actually import.
+    env = None
+    if isinstance((state or {}).get("env"), dict):
+        env = {**os.environ, **{k: str(v) for k, v in state["env"].items()}}
+
     try:
         proc = subprocess.run(
             cmd,
@@ -78,6 +95,7 @@ def command_exit_zero(state: Any, config: dict[str, Any]) -> Reward:
             timeout=int(config.get("timeout", 60)),
             encoding="utf-8",
             errors="replace",
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return Reward(0.0, f"verifier command timed out after {config.get('timeout', 60)}s")

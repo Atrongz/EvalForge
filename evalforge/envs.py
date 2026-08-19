@@ -277,6 +277,15 @@ class FileTaskEnv:
             return StepResult(Observation(f"deleted {args['path']}"))
         return StepResult(Observation(f"no such file: {args['path']}"))
 
+    def subprocess_env(self) -> dict[str, str] | None:
+        """Environment for `run` actions. None inherits the parent's.
+
+        Overridable so an environment that provisions an interpreter or puts a
+        source tree on the import path can wire it in without the action
+        handlers knowing anything about it.
+        """
+        return None
+
     def _run(self, args: dict[str, Any]) -> StepResult:
         if not self.allow_commands:
             return StepResult(Observation("commands are disabled in this environment"))
@@ -290,6 +299,7 @@ class FileTaskEnv:
             timeout=self.command_timeout,
             encoding="utf-8",
             errors="replace",
+            env=self.subprocess_env(),
         )
         body = ((proc.stdout or "") + (proc.stderr or ""))[: self.max_output_chars]
         return StepResult(

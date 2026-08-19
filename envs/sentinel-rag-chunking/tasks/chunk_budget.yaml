@@ -1,0 +1,91 @@
+- id: sentinel-rag-chunk-budget
+  goal: 'chunk_text in src/sentinel/rag/ingest.py ignores its max_tokens budget and returns the
+
+    whole document as a single chunk. Fix it so the existing tests in tests/test_rag.py pass.
+
+    Do not modify the tests.'
+  category: bugfix
+  notes: 'SYNTHESIZED, NOT MINED. scripts/mine_tasks.py found 0 usable candidates in this repo: 10 commits,
+    and the only one touching source and tests together is the root scaffold, which has no parent to start
+    from. So the broken state is applied to HEAD instead. Everything downstream is still real -- the module,
+    the tests, and the reward are the repository''s own. When history is minable, bug_files is replaced
+    by the parent commit and nothing else changes. The pip list is the closure of the TEST''S IMPORT GRAPH,
+    resolved by running it (scripts/resolve_deps.py), not copied from requirements.txt -- which pulls
+    torch and chromadb this test never touches. pydantic-settings is only needed because ingest.py imports
+    sentinel.config at module scope.'
+  setup:
+    repo: C:\Users\atron\Personal Proj\sentinel-rag
+    ref: HEAD
+    pip:
+    - tiktoken
+    - pytest
+    - pydantic-settings
+    bug_files:
+      src/sentinel/rag/ingest.py: "\"\"\"Ingest the policy corpus: load → chunk → embed → upsert into\
+        \ the vector store.\n\nRun:  python -m sentinel.rag.ingest\n(after `python scripts/seed_policies.py`\
+        \ has populated data/policies/)\n\"\"\"\nfrom __future__ import annotations\n\nimport hashlib\n\
+        \nimport tiktoken\n\nfrom sentinel.common.logging import configure_logging, get_logger\nfrom sentinel.config\
+        \ import settings\nfrom sentinel.rag.embeddings import embed_batch\nfrom sentinel.rag.store import\
+        \ get_store\n\nlog = get_logger(__name__)\n_enc = tiktoken.get_encoding(\"cl100k_base\")\n\n\n\
+        def chunk_text(text: str, max_tokens: int, overlap: int) -> list[str]:\n    toks = _enc.encode(text)\n\
+        \    chunks, start = [], 0\n    while start < len(toks):\n        end = len(toks)  # regression:\
+        \ consumes the whole document in one chunk\n        chunks.append(_enc.decode(toks[start:end]))\n\
+        \        if end == len(toks):\n            break\n        start = end - overlap\n    return chunks\n\
+        \n\ndef _chunk_id(source: str, idx: int, text: str) -> str:\n    h = hashlib.sha1(f\"{source}:{idx}:{text}\"\
+        .encode()).hexdigest()[:12]\n    return f\"{source}-{idx}-{h}\"\n\n\ndef main() -> None:\n   \
+        \ configure_logging()\n    files = sorted(settings.policies_dir.glob(\"*.txt\")) + sorted(\n \
+        \       settings.policies_dir.glob(\"*.md\")\n    )\n    if not files:\n        raise FileNotFoundError(\n\
+        \            f\"No policy docs in {settings.policies_dir}. Run: python scripts/seed_policies.py\"\
+        \n        )\n    store = get_store()\n    total = 0\n    for f in files:\n        chunks = chunk_text(f.read_text(encoding=\"\
+        utf-8\"),\n                            settings.chunk_tokens, settings.chunk_overlap)\n      \
+        \  ids = [_chunk_id(f.stem, i, c) for i, c in enumerate(chunks)]\n        embs = embed_batch(chunks)\n\
+        \        store.upsert(ids, chunks, embs, [f.name] * len(chunks))\n        total += len(chunks)\n\
+        \        log.info(\"ingested %s (%d chunks)\", f.name, len(chunks))\n    log.info(\"done. %d chunks\
+        \ in store (total now %d)\", total, store.count())\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  verifier: command_exit_zero
+  verifier_config:
+    cmd: '"{python}" -m pytest tests/test_rag.py -q'
+    timeout: 180
+    protect:
+    - tests/test_rag.py
+  gold:
+  - name: write_file
+    path: src/sentinel/rag/ingest.py
+    content: "\"\"\"Ingest the policy corpus: load → chunk → embed → upsert into the vector store.\n\n\
+      Run:  python -m sentinel.rag.ingest\n(after `python scripts/seed_policies.py` has populated data/policies/)\n\
+      \"\"\"\nfrom __future__ import annotations\n\nimport hashlib\n\nimport tiktoken\n\nfrom sentinel.common.logging\
+      \ import configure_logging, get_logger\nfrom sentinel.config import settings\nfrom sentinel.rag.embeddings\
+      \ import embed_batch\nfrom sentinel.rag.store import get_store\n\nlog = get_logger(__name__)\n_enc\
+      \ = tiktoken.get_encoding(\"cl100k_base\")\n\n\ndef chunk_text(text: str, max_tokens: int, overlap:\
+      \ int) -> list[str]:\n    toks = _enc.encode(text)\n    chunks, start = [], 0\n    while start <\
+      \ len(toks):\n        end = min(start + max_tokens, len(toks))\n        chunks.append(_enc.decode(toks[start:end]))\n\
+      \        if end == len(toks):\n            break\n        start = end - overlap\n    return chunks\n\
+      \n\ndef _chunk_id(source: str, idx: int, text: str) -> str:\n    h = hashlib.sha1(f\"{source}:{idx}:{text}\"\
+      .encode()).hexdigest()[:12]\n    return f\"{source}-{idx}-{h}\"\n\n\ndef main() -> None:\n    configure_logging()\n\
+      \    files = sorted(settings.policies_dir.glob(\"*.txt\")) + sorted(\n        settings.policies_dir.glob(\"\
+      *.md\")\n    )\n    if not files:\n        raise FileNotFoundError(\n            f\"No policy docs\
+      \ in {settings.policies_dir}. Run: python scripts/seed_policies.py\"\n        )\n    store = get_store()\n\
+      \    total = 0\n    for f in files:\n        chunks = chunk_text(f.read_text(encoding=\"utf-8\"\
+      ),\n                            settings.chunk_tokens, settings.chunk_overlap)\n        ids = [_chunk_id(f.stem,\
+      \ i, c) for i, c in enumerate(chunks)]\n        embs = embed_batch(chunks)\n        store.upsert(ids,\
+      \ chunks, embs, [f.name] * len(chunks))\n        total += len(chunks)\n        log.info(\"ingested\
+      \ %s (%d chunks)\", f.name, len(chunks))\n    log.info(\"done. %d chunks in store (total now %d)\"\
+      , total, store.count())\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  - name: submit
+  degenerate:
+    stub_the_test:
+    - name: write_file
+      path: tests/test_rag.py
+      content: "def test_ok():\n    assert True\n"
+    - name: submit
+    delete_the_test:
+    - name: delete_file
+      path: tests/test_rag.py
+    - name: submit
+    weaken_the_assertion:
+    - name: write_file
+      path: tests/test_rag.py
+      content: "from sentinel.rag.ingest import chunk_text\n\n\ndef test_chunking(): \n    assert chunk_text('x',\
+        \ max_tokens=400, overlap=40)\n"
+    - name: submit
+  max_steps: 12
