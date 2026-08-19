@@ -195,6 +195,52 @@ passes all four probes.
 adding, and the test asserted `add(2, 2) == 4` — which multiplication also satisfies. The broken
 fixture passed its own test, doing nothing scored 1.0, and the `null` probe caught it immediately.
 
+### Real repositories as environments
+
+`RepoEnv` extracts a repo at a git ref into a disposable sandbox, provisions an interpreter, and
+lets the repository's own tests decide the reward. Three stages, each answering one question:
+
+```bash
+python scripts/mine_tasks.py <repo>              # can this asset yield tasks at all?
+python scripts/resolve_deps.py <env-suite>       # what does the target test actually import?
+evalforge gate <env-suite>                       # does the task measure what it claims?
+```
+
+**Mining is triage, and it runs first because it is seconds instead of a day.** A commit that
+changes source and tests together hands you a whole task for free — parent as starting state, test
+as verifier, diff as gold patch. A repository squash-imported as one scaffold hands you nothing,
+and no amount of containerization changes that. Root commits are skipped: no parent, no starting
+state.
+
+**The dependency closure comes from running the test, not from `requirements.txt`.** That file is
+the closure of the whole project, it is usually stale, and on an acquired codebase it often no
+longer resolves. `resolve_deps.py` runs the verifier, reads the `ModuleNotFoundError`, installs
+that one package, and repeats. For the sentinel-rag task it settled in two rounds on
+`tiktoken, pytest, pydantic-settings` — while `requirements.txt` would have pulled torch and
+chromadb that the test never touches.
+
+The sandbox holds the source, a cached virtualenv holds third-party packages, and `PYTHONPATH`
+joins them — so the venv is reusable across episodes while the code under test is restored fresh
+every reset. Extraction is `git archive`, never a checkout: a harness that shares a worktree with
+someone's actual repository is how uncommitted work gets eaten.
+
+```
+$ evalforge gate sentinel-rag-chunking
+
+sentinel-rag-chunking  ·  repo
+  PASS  sentinel-rag-chunk-budget
+        gold         gold                  reward=1.0   ok
+        null         null                  reward=0.0   ok
+        degenerate   stub_the_test         reward=0.0   ok
+        degenerate   delete_the_test       reward=0.0   ok
+        degenerate   weaken_the_assertion  reward=0.0   ok
+gate passed · 1/1 tasks sound
+```
+
+Isolation is process-level — a temp directory and a separate interpreter. That is honest for a repo
+you wrote and **not** sufficient for third-party code, which can read the filesystem and reach the
+network. Container isolation belongs in a separate adapter and is deliberately not faked here.
+
 ---
 
 ## Three things this harness caught while being built
