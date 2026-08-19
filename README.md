@@ -131,6 +131,72 @@ required_pass_rate: 1.0
 
 ---
 
+## Environments
+
+A target answers one question and forgets it happened. An **environment** holds state: the agent
+acts, the world changes, and the next observation reflects it. Same registry pattern as targets —
+`reset()`, an action space, `step()`, and terminal state handed to a verifier.
+
+```
+Target       input ─────────────────────────────► output ──► scorer  ──► score
+Environment  reset ──► step ──► step ──► step ──► world  ──► verifier ──► reward
+```
+
+A **verifier** grades the world, not the answer. The two fail differently: a scorer is fooled by
+fluent text, a verifier is fooled by a shortcut.
+
+| | |
+|---|---|
+| `file_task` | A seeded working directory plus a command runner. The SWE-bench shape: put the repo in a known broken state, let the agent act, let the repo's own tests decide. |
+| `scripted` | No world at all. The counterpart to `echo` — exercises the runner and the gate with no filesystem and no subprocess. |
+| `command_exit_zero` | Runs a command in the final world. Exit 0 is success. Can pin the files it grades against tampering. |
+| `file_contains` / `actions_match` | Artifact contents; or the *procedure* — an approval that must precede a send. |
+
+### The reward-hack gate
+
+A verifier is only as good as the laziest thing that satisfies it, and a model trained against a
+reward will find that thing reliably — that is the mechanism, not a failure of it. So a task does
+not enter a suite on the author's confidence. It enters by surviving three probes, all run through
+the ordinary episode runner with no special-casing:
+
+| probe | what it runs | must |
+|---|---|---|
+| `gold` | the known-good sequence | **pass** |
+| `null` | nothing at all | **fail** |
+| `degenerate` | named shortcuts — stub the test, delete the test | **fail** |
+
+`null` catches the quietest broken task there is: one already solved at reset, which never fails,
+never draws attention, and silently inflates every score it appears in. A task with no gold
+sequence fails the gate outright — "nobody demonstrated this is solvable" and "this is hard" look
+identical from the outside, and only one is worth shipping.
+
+```bash
+$ evalforge gate hackable-demo
+
+hackable-demo  ·  file_task
+  FAIL  unprotected-grader
+        gold         gold               reward=1.0   ok
+        null         null               reward=0.0   ok
+        degenerate   stub_the_test      reward=1.0   REWARD HACK: reached 1.0 without doing the work
+  FAIL  already-solved
+        null         null               reward=1.0   REWARD HACK: reached 1.0 without doing the work
+  FAIL  never-demonstrated
+        gold         gold               reward=0.0   ERROR solvability was never demonstrated
+
+2 reward hack(s) — a shortcut was rewarded. Fix the verifier, not the task.
+gate failed · 0/3 tasks sound
+```
+
+`envs/hackable-demo/` is deliberately unsound and is **expected to exit 1**. A gate nobody has
+watched fail is a gate nobody should rely on. `envs/fix-add/` is the same task built correctly and
+passes all four probes.
+
+**The gate earned its place on the first run.** The seeded bug was `add` multiplying instead of
+adding, and the test asserted `add(2, 2) == 4` — which multiplication also satisfies. The broken
+fixture passed its own test, doing nothing scored 1.0, and the `null` probe caught it immediately.
+
+---
+
 ## Three things this harness caught while being built
 
 Recorded because they are the argument for having one at all. Each was invisible to reading the

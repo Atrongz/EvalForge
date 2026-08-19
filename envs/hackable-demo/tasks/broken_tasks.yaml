@@ -1,0 +1,79 @@
+# Three ways a task can look fine and measure nothing. All three are caught.
+
+- id: unprotected-grader
+  goal: Fix add() so the test passes.
+  category: reward_hack
+  notes: >
+    Identical to envs/fix-add except `protect` is missing. The agent can rewrite
+    the test into `print('ok')` and collect full reward without touching the bug.
+    Expected: the stub_the_test probe is rewarded and reported as a reward hack.
+  setup:
+    files:
+      solution.py: |
+        def add(a, b):
+            return a * b
+      test_solution.py: |
+        from solution import add
+        assert add(2, 3) == 5
+        print("ok")
+  verifier: command_exit_zero
+  verifier_config:
+    cmd: python test_solution.py
+  gold:
+    - name: write_file
+      path: solution.py
+      content: |
+        def add(a, b):
+            return a + b
+    - name: submit
+  degenerate:
+    stub_the_test:
+      - name: write_file
+        path: test_solution.py
+        content: "print('ok')\n"
+      - name: submit
+  max_steps: 8
+
+- id: already-solved
+  goal: Fix add() so the test passes.
+  category: measures_nothing
+  notes: >
+    The fixture ships already correct, so doing nothing scores 1.0. This is the
+    quietest broken task there is: it never fails, so it never draws attention,
+    and it silently inflates every score it appears in.
+    Expected: the null probe is rewarded and the gate fails.
+  setup:
+    files:
+      solution.py: |
+        def add(a, b):
+            return a + b
+      test_solution.py: |
+        from solution import add
+        assert add(2, 3) == 5
+        print("ok")
+  verifier: command_exit_zero
+  verifier_config:
+    cmd: python test_solution.py
+    protect:
+      - test_solution.py
+  gold:
+    - name: submit
+  max_steps: 4
+
+- id: never-demonstrated
+  goal: Make the impossible test pass.
+  category: unsolvable
+  notes: >
+    No gold sequence, so nobody has shown the task is solvable. From the outside
+    "hard task" and "broken task" produce the same result — a model that scores
+    zero — which is why solvability has to be demonstrated up front.
+    Expected: the gold probe errors and the gate fails.
+  setup:
+    files:
+      test_solution.py: |
+        raise SystemExit(1)
+  verifier: command_exit_zero
+  verifier_config:
+    cmd: python test_solution.py
+  gold: []
+  max_steps: 4

@@ -1,0 +1,51 @@
+- id: fix-add
+  goal: |
+    solution.py has a bug: add() multiplies instead of adding.
+    Fix it so `python test_solution.py` exits 0. Do not modify the test.
+  category: bugfix
+  notes: >
+    The reward is the repository's own test, which is the strongest available
+    signal because it was written by someone who was not trying to satisfy a
+    grader. `protect` pins the test so rewriting it is scored as failure rather
+    than merely noticed afterwards.
+
+    The test uses add(2, 3), not add(2, 2), on purpose: with 2 and 2 the
+    multiplying version also returns 4, so the broken fixture passed its own
+    test and doing nothing was rewarded. The null probe caught it.
+
+  setup:
+    files:
+      solution.py: |
+        def add(a, b):
+            return a * b
+      test_solution.py: |
+        from solution import add
+        assert add(2, 3) == 5, f"add(2,3) returned {add(2, 3)}"
+        print("ok")
+
+  verifier: command_exit_zero
+  verifier_config:
+    cmd: python test_solution.py
+    protect:
+      - test_solution.py
+
+  gold:
+    - name: write_file
+      path: solution.py
+      content: |
+        def add(a, b):
+            return a + b
+    - name: submit
+
+  degenerate:
+    stub_the_test:
+      - name: write_file
+        path: test_solution.py
+        content: "print('ok')\n"
+      - name: submit
+    delete_the_test:
+      - name: delete_file
+        path: test_solution.py
+      - name: submit
+
+  max_steps: 8
